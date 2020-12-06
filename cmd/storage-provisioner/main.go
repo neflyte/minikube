@@ -30,13 +30,22 @@ var pvDir = "/tmp/hostpath-provisioner"
 func main() {
 	// Glog requires that /tmp exists.
 	if err := os.MkdirAll("/tmp", 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating tmpdir: %v\n", err)
+		_, fmtErr := fmt.Fprintf(os.Stderr, "Error creating tmpdir: %v\n", err)
+		if fmtErr != nil {
+			// Make an attempt at reporting the error
+			fmt.Printf("%s\n", fmtErr.Error())
+		}
 		os.Exit(1)
 	}
 	flag.Parse()
 
-	if err := storage.StartStorageProvisioner(pvDir); err != nil {
-		klog.Exit(err)
+	// Fetch the Kubernetes node name from the environment
+	kubernetesNodeName, ok := os.LookupEnv("KUBERNETES_NODE_NAME")
+	if !ok || kubernetesNodeName == "" {
+		kubernetesNodeName = "minikube" // FIXME: Would any other default suffice?
 	}
 
+	if err := storage.StartStorageProvisioner(pvDir, kubernetesNodeName); err != nil {
+		klog.Exit(err)
+	}
 }
