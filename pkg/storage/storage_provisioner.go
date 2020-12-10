@@ -66,8 +66,11 @@ func (p *hostPathProvisioner) Provision(options controller.ProvisionOptions) (*c
 	// SANITY CHECK: If the pvPath already exists then we do not want to overwrite it
 	pvPathFileInfo, err := os.Stat(pvPath)
 	if err != nil {
-		// Log an error here but continue on since that is the previous behaviour
-		klog.Errorf("os.Stat(%s) error: %v", pvPath, err)
+		// If the directory doesn't exist, that's good. Otherwise, log an error
+		if !strings.HasSuffix(err.Error(), "no such file or directory") {
+			klog.Errorf("os.Stat(%s) error: %v", pvPath, err)
+		}
+		// Continue on since that is the previous behaviour
 	} else {
 		if pvPathFileInfo.IsDir() {
 			// The PV directory already exists so we do not want to go any further
@@ -114,7 +117,7 @@ func (p *hostPathProvisioner) Provision(options controller.ProvisionOptions) (*c
 func (p *hostPathProvisioner) Delete(volume *core.PersistentVolume) error {
 	klog.Infof("Deleting volume %v", volume)
 
-	// Look up the hostPathProvsionerIdentity
+	// Look up the hostPathProvisionerIdentity
 	ann, ok := volume.Annotations["hostPathProvisionerIdentity"]
 	if !ok {
 		return errors.New("identity annotation not found on PV")
@@ -127,20 +130,23 @@ func (p *hostPathProvisioner) Delete(volume *core.PersistentVolume) error {
 		pvPath := volume.Spec.PersistentVolumeSource.HostPath.Path
 		// Trim the p.pvDir prefix from the PV path
 		pvPathWithoutPrefix := strings.TrimPrefix(pvPath, p.pvDir)
+		// If there is a forward slash prefix then remove it as well
+		pvPathWithoutPrefix = strings.TrimPrefix(pvPathWithoutPrefix, "/")
 		// Split up the path we're being asked to delete into node + namespace + PVC
 		pvParts := strings.Split(pvPathWithoutPrefix, "/")
 		klog.Infof("pvPath=%s, pvPathWithoutPrefix=%s, pvParts=%#v", pvPath, pvPathWithoutPrefix, pvParts)
-		if len(pvParts) < 3 {
-			// We're expecting at least 3 tokens
+		if len(pvParts) == 0 {
+			// We're expecting at least one token
 			return &controller.IgnoredError{
 				Reason: fmt.Sprintf("identity annotation on PV (%s) does not match ours (%s)", ann, p.identity),
 			}
 		}
+		// The first token should be the node name
 		pvNode := pvParts[0]
 		klog.Infof("pvNode=%s, kubernetesNodeName=%s", pvNode, p.kubernetesNodeName)
 		// Check if the volume was provisioned on a node of the same name as the one we're on
 		if pvNode != p.kubernetesNodeName {
-			// The volume wasn't provisioned on this node; do nothing
+			// The volume wasn't provisioned on this node; do nothing further
 			return &controller.IgnoredError{
 				Reason: fmt.Sprintf("volume was provisioned to node %s but we are on node %s; will not delete the volume", pvNode, p.kubernetesNodeName),
 			}
